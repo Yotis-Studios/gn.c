@@ -1,0 +1,61 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Yotis-Studios/gn.js
+          path: gnjs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install gn.js and 32-bit toolchain
+        run: |
+          npm ci --prefix gnjs
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib
+      - name: make check (native, -m32, ASan/UBSan; codec + live client tests)
+        run: make check GNJS=gnjs
+      - name: Fuzz briefly
+        run: make fuzz FUZZ_TIME=30
+
+  windows:
+    # 32-bit clang-cl, the toolchain Palmyra builds with
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Yotis-Studios/gn.js
+          path: gnjs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+      - name: Build (clang-cl, 32-bit)
+        run: |
+          npm ci --prefix gnjs
+          mkdir -p build-win
+          CL="clang-cl -m32 /nologo /W4 /WX /Iinclude -D_CRT_SECURE_NO_WARNINGS"
+          $CL /c src/gn_codec.c /Fobuild-win/gn_codec.obj
+          $CL /c src/gn_client.c /Fobuild-win/gn_client.obj
+          $CL tests/test_vectors.c build-win/gn_codec.obj /Fobuild-win/ /Febuild-win/test_vectors.exe
+          $CL tests/test_client.c build-win/gn_codec.obj build-win/gn_client.obj ws2_32.lib /Fobuild-win/ /Febuild-win/test_client.exe
+          $CL /EHsc tests/test_cpp.cpp build-win/gn_codec.obj build-win/gn_client.obj ws2_32.lib /Fobuild-win/ /Febuild-win/test_cpp.exe
+      - name: Test
+        run: |
+          build-win/test_vectors.exe tests/vectors/protocol.json
+          tests/run_live.sh build-win/test_client.exe gnjs
+          WS_PORT=18531 tests/run_live.sh build-win/test_cpp.exe gnjs
