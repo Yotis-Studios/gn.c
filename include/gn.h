@@ -2,14 +2,17 @@
  * gn.c - C implementation of the gn binary protocol
  * https://github.com/Yotis-Studios/gn.js/blob/main/PROTOCOL.md
  *
- * Two independent parts:
- *
  *   Codec   gn_writer / gn_reader / gn_frames: build and parse packets in
  *           memory. No allocation, no I/O. Usable with any transport.
  *
- *   Client  gn_client: a non-blocking WebSocket (ws://) client. Call
- *           gn_client_poll() once per frame; callbacks fire from inside it,
- *           on the calling thread. No threads are created.
+ *   Client  gn_client: a non-blocking WebSocket (ws://) client.
+ *
+ *   Server  gn_server: a non-blocking WebSocket server for any number of
+ *           clients.
+ *
+ * The client and server are polled (gn_client_poll / gn_server_poll, e.g.
+ * once per frame); callbacks fire from inside the poll, on the calling
+ * thread. No threads are created.
  *
  * C99. Builds as 32- or 64-bit on Windows (Winsock, link ws2_32), Linux and
  * macOS. Not thread-safe: use each gn_client from one thread.
@@ -226,6 +229,75 @@ int gn_client_send_packet(gn_client *c, gn_writer *w);
 void gn_client_close(gn_client *c);
 
 gn_client_state gn_client_get_state(const gn_client *c);
+
+/* ===================================================================== */
+/* WebSocket server                                                      */
+/* ===================================================================== */
+
+/* Same model as the client: non-blocking, call gn_server_poll() regularly
+ * (e.g. once per frame), callbacks fire inside it on the calling thread.
+ * One server handles any number of connections. */
+
+typedef struct gn_server gn_server;
+typedef struct gn_conn gn_conn; /* one connected client */
+
+typedef struct gn_server_callbacks {
+    /* A client completed the WebSocket handshake. */
+    void (*on_connect)(void *user, gn_conn *conn);
+    /* One packet from conn. The reader is only valid during the callback. */
+    void (*on_packet)(void *user, gn_conn *conn, gn_reader *packet);
+    /* conn is gone: fires exactly once for every conn that fired on_connect.
+     * code is the close code (1000 normal, 1001 server closing, 1006 lost).
+     * conn may not be used after this returns. */
+    void (*on_disconnect)(void *user, gn_conn *conn, int code);
+    /* conn is NULL for errors not tied to a connected client (e.g. a
+     * rejected handshake). Fatal connection errors are followed by
+     * on_disconnect. */
+    void (*on_error)(void *user, gn_conn *conn, int err, const char *message);
+    void *user;
+} gn_server_callbacks;
+
+gn_server *gn_server_create(const gn_server_callbacks *callbacks);
+
+/* Not from inside a callback. Drops every connection without a close
+ * handshake; no callbacks fire. */
+void gn_server_destroy(gn_server *s);
+
+/* Starts listening. host NULL = all IPv4 interfaces; otherwise an address or
+ * name to bind to. port 0 picks a free port (see gn_server_port). */
+int gn_server_listen(gn_server *s, const char *host, uint16_t port);
+
+/* The port actually bound, or 0 if not listening. */
+uint16_t gn_server_port(const gn_server *s);
+
+/* Accepts connections, does all pending I/O and dispatches callbacks. Never
+ * blocks. */
+void gn_server_poll(gn_server *s);
+
+/* Sends one message (packet bytes) to every open connection except
+ * `except` (may be NULL). */
+int gn_server_broadcast(gn_server *s, const void *data, size_t len, gn_conn *except);
+int gn_server_broadcast_packet(gn_server *s, gn_writer *w, gn_conn *except);
+
+/* Stops listening and closes every connection (code 1001). on_disconnect
+ * fires for each from later polls; when gn_server_connection_count() is 0
+ * the server can be destroyed. Safe inside callbacks. */
+void gn_server_close(gn_server *s);
+
+/* Open or closing connections (not counting handshakes in progress). */
+size_t gn_server_connection_count(const gn_server *s);
+
+int gn_conn_send(gn_conn *conn, const void *data, size_t len);
+int gn_conn_send_packet(gn_conn *conn, gn_writer *w);
+/* Starts the close handshake with `code` (e.g. 1000; 4000-4999 for your own
+ * reasons). on_disconnect fires from a later poll. Safe inside callbacks. */
+void gn_conn_close(gn_conn *conn, int code);
+/* Unique per server, starting at 1. */
+uint32_t gn_conn_id(const gn_conn *conn);
+/* The path the client requested, e.g. "/" or "/room/7". */
+const char *gn_conn_path(const gn_conn *conn);
+void gn_conn_set_user(gn_conn *conn, void *user);
+void *gn_conn_get_user(const gn_conn *conn);
 
 #ifdef __cplusplus
 }

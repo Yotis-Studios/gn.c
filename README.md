@@ -1,14 +1,15 @@
 # gn.c
 
 C implementation of the [gn](https://github.com/Yotis-Studios/gn.js) binary
-protocol, with a C++ wrapper and a built-in WebSocket client. It talks to
-gn.js and gn.hml servers.
+protocol, with a WebSocket client, a WebSocket server and a C++ wrapper. It
+talks to gn.js and gn.hml clients and servers.
 
 - **Codec**: builds and parses packets in memory. No allocation, no I/O, works
   with any transport.
-- **Client**: a non-blocking `ws://` WebSocket client with no dependencies.
-  You call `poll()` once per frame, and callbacks run inside that call on your
-  thread. It creates no threads.
+- **Client and server**: non-blocking `ws://` WebSocket, no dependencies. You
+  call `poll()` once per frame, and callbacks run inside that call on your
+  thread. No threads are created. The server handles any number of clients,
+  so a game can host from its own main loop.
 - **C++ wrapper** (`gn.hpp`): header-only and C++03, so it builds with older
   compilers such as VC9-era toolchains.
 
@@ -25,8 +26,13 @@ Copy `include/` and `src/` into your tree and compile the two `.c` files as C99:
 include/gn.h      C API
 include/gn.hpp    C++ wrapper (optional)
 src/gn_codec.c    packets
-src/gn_client.c   WebSocket client (leave out if you bring your own transport)
+src/gn_ws.c       WebSocket plumbing shared by client and server
+src/gn_internal.h   (private header for the three below)
+src/gn_client.c   WebSocket client
+src/gn_server.c   WebSocket server
 ```
+
+The codec alone is enough with your own transport; leave out the other three.
 
 - **Windows:** link `ws2_32`. The library doesn't rely on `#pragma comment(lib)`,
   so it also works with `/NODEFAULTLIB`. It avoids C99 library functions that
@@ -70,6 +76,31 @@ net.send(w);
 `gn::Packet` is only valid during `onPacket`. `getString()` and `getBuffer()`
 return copies, so copy out anything you keep. See
 [examples/game_loop.cpp](examples/game_loop.cpp) for a complete program.
+
+### Server
+
+```cpp
+class Relay : public gn::Server {
+protected:
+    virtual void onConnect(gn::Connection c) { /* c.id(), c.path() */ }
+    virtual void onPacket(gn::Connection from, const gn::Packet &p) {
+        gn::PacketWriter w(p.netId());
+        for (size_t i = 0; i < p.size(); i++) w.addValue(p.values()[i]);
+        broadcast(w, from);               // to everyone but the sender
+    }
+    virtual void onDisconnect(gn::Connection c, int code) {}
+};
+
+Relay relay;
+relay.listen(8080);      // all IPv4 interfaces; listen(0, "127.0.0.1") for a free local port
+// every frame:
+relay.poll();
+```
+
+`gn::Connection` is a handle you can copy and compare, with `send`, `close(code)`,
+`id`, `path` and `setUser`/`user`. Don't use it after `onDisconnect` for it returns.
+See [examples/relay_server.cpp](examples/relay_server.cpp), a lockstep relay
+that also tracks the turn barrier.
 
 ## C
 
@@ -137,19 +168,41 @@ point stays valid.
 - **Limits:** 16 MB per message and a 16 MB send backlog, a 10 s connect
   timeout, and a 2 s close timeout.
 
+### Server behavior (C API: `gn_server_*`, `gn_conn_*`)
+
+- **Connections** become visible in `on_connect` after the WebSocket
+  handshake. Requests that aren't valid upgrades get an HTTP error (400, or
+  426 for the wrong WebSocket version) and an `on_error` with a NULL `conn`.
+- **`on_disconnect`** fires exactly once for every connection that fired
+  `on_connect`, with the close code (1000 normal, 1001 server closing, 1006
+  lost, or your own 4000-4999 from `gn_conn_close`). A `gn_conn` stays valid
+  until that callback returns.
+- **Inside callbacks** you can send to any connection, close any connection,
+  broadcast, and call `gn_server_close`.
+- **`gn_server_close`** stops listening and closes every connection with 1001.
+  Their `on_disconnect`s fire from later polls; once
+  `gn_server_connection_count()` is 0 you can destroy the server.
+- **Clients must mask their frames** (RFC 6455); unmasked frames close the
+  connection with 1002. Text messages are reported through `on_error` and the
+  connection stays open.
+- **Binding:** `host` NULL listens on all IPv4 interfaces. IPv6 needs an
+  explicit address. Port 0 picks a free port (`gn_server_port`).
+
 ### Not supported
 
 - **`wss://` (TLS).** The transport is plain TCP. For encrypted connections,
-  use a TLS-terminating proxy in front of the server for now.
-- **Server side.** Use gn.js or gn.hml.
+  put a TLS-terminating proxy in front of the server for now.
 
 ## Testing
 
 ```
-make test          codec conformance vectors + C++ wrapper (no network)
-make test-live     client against a real gn.js server (needs node; GNJS=../gn.js)
-make check         the above, plus -m32 and AddressSanitizer/UBSan builds
-make fuzz          libFuzzer on the decoder and the WebSocket parser (clang)
+make test          conformance vectors, client<->server in one process, C++ wrapper
+make test-live     against other implementations: the gn.c client vs a gn.js server;
+                   gn.js, raw `ws` and raw TCP clients vs the gn.c server (needs node,
+                   GNJS=../gn.js); the gn.hml client vs the gn.c server (if hemlock is
+                   installed, GNHML=../gn.hml)
+make check         test + test-live, plus -m32 and AddressSanitizer/UBSan builds
+make fuzz          libFuzzer on the decoder and both WebSocket parsers (clang)
 make test-windows  cross-build with WIN_CC (e.g. zig cc -target x86-windows-gnu), run under wine
 ```
 

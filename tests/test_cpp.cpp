@@ -120,10 +120,59 @@ static void testClient(int port)
     ok(name);
 }
 
+class EchoServer : public gn::Server {
+public:
+    EchoServer() : connects(0), disconnects(0), lastCode(0) {}
+    int connects, disconnects, lastCode;
+    std::string lastPath;
+
+protected:
+    virtual void onConnect(gn::Connection c)
+    {
+        connects++;
+        lastPath = c.path();
+        c.setUser(this);
+    }
+    virtual void onPacket(gn::Connection c, const gn::Packet &p)
+    {
+        gn::PacketWriter w(p.netId());
+        w.add(p.getInt(0) * 2).add(p.getString(1) + "!");
+        if (c.user() == this) c.send(w);
+    }
+    virtual void onDisconnect(gn::Connection, int code)
+    {
+        disconnects++;
+        lastCode = code;
+    }
+};
+
+static void testServer()
+{
+    const char *name = "Server subclass with a Client in the same loop";
+    EchoServer s;
+    EchoClient c;
+    CHECK(s.listen(0, "127.0.0.1") == GN_OK && s.port() != 0, "listen");
+    CHECK(c.connect("127.0.0.1", s.port(), "/game") == GN_OK, "connect");
+    for (int i = 0; i < 5000 && !(c.connected && s.connects); i++) { s.poll(); c.poll(); sleepMs(1); }
+    CHECK(c.isOpen() && s.connects == 1 && s.lastPath == "/game" && s.connectionCount() == 1, "connected");
+
+    gn::PacketWriter w(4);
+    w.add(21).add("hi");
+    c.send(w);
+    for (int i = 0; i < 5000 && !c.got; i++) { s.poll(); c.poll(); sleepMs(1); }
+    CHECK(c.got == 1 && c.lastInt == 42 && c.lastString == "hi!", "reply");
+
+    s.close();
+    for (int i = 0; i < 5000 && !(c.disconnected && s.disconnects); i++) { s.poll(); c.poll(); sleepMs(1); }
+    CHECK(c.code == 1001 && s.disconnects == 1 && s.lastCode == 1001, "server close");
+    ok(name);
+}
+
 int main(int argc, char **argv)
 {
     testWriterGrowsAndRoundTrips();
     testWriterErrors();
+    testServer();
     if (argc > 1) testClient(std::atoi(argv[1]));
     std::printf("C++ tests: %d passed, %d failed\n", passed, failed);
     return failed ? 1 : 0;

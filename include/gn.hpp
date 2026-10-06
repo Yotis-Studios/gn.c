@@ -205,6 +205,89 @@ private:
     Client &operator=(const Client &);
 };
 
+/* A connected client, as seen by a Server. A cheap handle: copy it freely,
+ * but don't use it after Server::onDisconnect for it returns. */
+class Connection {
+public:
+    Connection() : c_(0) {}
+    explicit Connection(gn_conn *c) : c_(c) {}
+
+    int send(PacketWriter &w) { return gn_conn_send_packet(c_, w.raw()); }
+    int send(const void *data, size_t len) { return gn_conn_send(c_, data, len); }
+    void close(int code = 1000) { gn_conn_close(c_, code); }
+    unsigned id() const { return gn_conn_id(c_); }
+    const char *path() const { return gn_conn_path(c_); }
+    void setUser(void *user) { gn_conn_set_user(c_, user); }
+    void *user() const { return gn_conn_get_user(c_); }
+    gn_conn *raw() const { return c_; }
+
+    bool operator==(const Connection &o) const { return c_ == o.c_; }
+    bool operator!=(const Connection &o) const { return c_ != o.c_; }
+
+private:
+    gn_conn *c_;
+};
+
+/* WebSocket server. Subclass and override the on* handlers; call poll() once
+ * per frame. Handlers run inside poll() on the calling thread. */
+class Server {
+public:
+    Server() : s_(0)
+    {
+        gn_server_callbacks cb;
+        cb.on_connect = &Server::connectThunk;
+        cb.on_packet = &Server::packetThunk;
+        cb.on_disconnect = &Server::disconnectThunk;
+        cb.on_error = &Server::errorThunk;
+        cb.user = this;
+        s_ = gn_server_create(&cb);
+    }
+    virtual ~Server() { gn_server_destroy(s_); }
+
+    bool valid() const { return s_ != 0; }
+
+    /* host NULL = all IPv4 interfaces; port 0 = pick one (see port()). */
+    int listen(unsigned short port, const char *host = 0)
+    {
+        return s_ ? gn_server_listen(s_, host, port) : GN_ERR_MEMORY;
+    }
+    unsigned short port() const { return gn_server_port(s_); }
+    void poll() { if (s_) gn_server_poll(s_); }
+    void close() { if (s_) gn_server_close(s_); }
+    size_t connectionCount() const { return gn_server_connection_count(s_); }
+
+    int broadcast(PacketWriter &w, Connection except = Connection())
+    {
+        return s_ ? gn_server_broadcast_packet(s_, w.raw(), except.raw()) : GN_ERR_MEMORY;
+    }
+    int broadcast(const void *data, size_t len, Connection except = Connection())
+    {
+        return s_ ? gn_server_broadcast(s_, data, len, except.raw()) : GN_ERR_MEMORY;
+    }
+
+protected:
+    virtual void onConnect(Connection) {}
+    virtual void onPacket(Connection, const Packet &) {}
+    virtual void onDisconnect(Connection, int /*code*/) {}
+    /* conn is empty (raw() == NULL) for errors not tied to a client. */
+    virtual void onError(Connection, int /*err*/, const char * /*message*/) {}
+
+private:
+    static void connectThunk(void *u, gn_conn *c) { static_cast<Server *>(u)->onConnect(Connection(c)); }
+    static void packetThunk(void *u, gn_conn *c, gn_reader *r)
+    {
+        Packet p(r);
+        static_cast<Server *>(u)->onPacket(Connection(c), p);
+    }
+    static void disconnectThunk(void *u, gn_conn *c, int code) { static_cast<Server *>(u)->onDisconnect(Connection(c), code); }
+    static void errorThunk(void *u, gn_conn *c, int err, const char *m) { static_cast<Server *>(u)->onError(Connection(c), err, m); }
+
+    gn_server *s_;
+
+    Server(const Server &);
+    Server &operator=(const Server &);
+};
+
 } /* namespace gn */
 
 #endif /* GN_HPP */

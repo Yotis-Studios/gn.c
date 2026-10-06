@@ -1,0 +1,40 @@
+// gn.hml client against a gn.c server; see tests/run_interop_hml.sh.
+import { Packet, Client } from "@GNHML@/src/index.hml";
+
+let port = i32(args[1]);
+let passed = 0;
+let failed = 0;
+
+fn check(name, ok) {
+    if (ok) {
+        print("  pass: " + name);
+        passed = passed + 1;
+    } else {
+        print("  FAIL " + name);
+        failed = failed + 1;
+    }
+}
+
+let c = Client();
+c.connect("127.0.0.1", port);
+check("connects", c.is_connected());
+
+let p = Packet(1);
+p.add([200, -40000, 4000000000, 1.5, "héllo", true, null, 7]);
+c.send(p);
+let echo = c.recv_packet();
+check("echo arrives", echo != null && echo.net_id == 1);
+if (echo != null) {
+    check("integers", echo.get(0) == 200 && echo.get(1) == -40000 && echo.get(2) == 4000000000);
+    check("float", echo.get(3) == 1.5);
+    check("string", echo.get(4) == "héllo");
+    check("bool as u8, null, trailing value", echo.get(5) == 1 && echo.get(6) == null && echo.get(7) == 7);
+}
+
+// Not tested: a server-initiated close. Hemlock's @stdlib/websocket client
+// never reports one (it handles LWS_CALLBACK_CLOSED but not
+// LWS_CALLBACK_CLIENT_CLOSED), so gn.hml's recv_packet() would block forever.
+c.disconnect();
+
+print("gn.hml interop tests: " + passed + " passed, " + failed + " failed");
+assert(failed == 0, "all interop tests should pass");
