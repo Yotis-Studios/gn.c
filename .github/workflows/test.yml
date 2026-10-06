@@ -45,15 +45,17 @@ jobs:
         with:
           arch: x86
       - name: Build (clang-cl, 32-bit)
+        env:
+          MSYS_NO_PATHCONV: 1 # keep Git Bash from rewriting /-style flags
         run: |
           npm ci --prefix gnjs
           mkdir -p build-win
-          CL="clang-cl -m32 /nologo /W4 /WX /Iinclude -D_CRT_SECURE_NO_WARNINGS"
-          $CL /c src/gn_codec.c /Fobuild-win/gn_codec.obj
-          $CL /c src/gn_client.c /Fobuild-win/gn_client.obj
-          $CL tests/test_vectors.c build-win/gn_codec.obj /Fobuild-win/ /Febuild-win/test_vectors.exe
-          $CL tests/test_client.c build-win/gn_codec.obj build-win/gn_client.obj ws2_32.lib /Fobuild-win/ /Febuild-win/test_client.exe
-          $CL /EHsc tests/test_cpp.cpp build-win/gn_codec.obj build-win/gn_client.obj ws2_32.lib /Fobuild-win/ /Febuild-win/test_cpp.exe
+          CL="clang-cl -m32 -nologo -W4 -WX -Iinclude -D_CRT_SECURE_NO_WARNINGS"
+          $CL -c src/gn_codec.c -Fobuild-win/gn_codec.obj
+          $CL -c src/gn_client.c -Fobuild-win/gn_client.obj
+          $CL tests/test_vectors.c build-win/gn_codec.obj -Fobuild-win/ -Febuild-win/test_vectors.exe
+          $CL tests/test_client.c build-win/gn_codec.obj build-win/gn_client.obj ws2_32.lib -Fobuild-win/ -Febuild-win/test_client.exe
+          $CL -EHsc tests/test_cpp.cpp build-win/gn_codec.obj build-win/gn_client.obj ws2_32.lib -Fobuild-win/ -Febuild-win/test_cpp.exe
       - name: Test
         run: |
           build-win/test_vectors.exe tests/vectors/protocol.json
