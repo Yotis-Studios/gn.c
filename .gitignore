@@ -1,0 +1,7 @@
+build/
+build32/
+build-asan/
+build-win/
+crash-*
+leak-*
+timeout-*

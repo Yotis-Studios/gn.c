@@ -1,0 +1,642 @@
+{
+  "description": "Conformance vectors for the gn wire protocol (see PROTOCOL.md). Every implementation should pass all of them.",
+  "version": 1,
+  "value_format": {
+    "int": "{ \"t\": \"int\", \"v\": <integer> }",
+    "float": "{ \"t\": \"float\", \"v\": <number> | \"NaN\" | \"Infinity\" | \"-Infinity\" }",
+    "bool": "{ \"t\": \"bool\", \"v\": <true|false> } (encode only; decodes as u8)",
+    "string": "{ \"t\": \"string\", \"v\": <string> } or { \"t\": \"string\", \"repeat\": <string>, \"count\": <n> }",
+    "buffer": "{ \"t\": \"buffer\", \"hex\": <hex bytes> }",
+    "undefined": "{ \"t\": \"undefined\" } (null in Hemlock)",
+    "decoded": "{ \"type\": <wire type name>, \"v\": <value> } or, for buffers, { \"type\": \"buffer\", \"hex\": <hex> }; undefined has no \"v\". Float \"v\" may be \"NaN\", \"Infinity\" or \"-Infinity\"."
+  },
+  "sections": {
+    "encode": "Build a packet from netId + values; the result (size header included) must equal hex.",
+    "encode_errors": "Building this packet must fail (throw / return an error) rather than produce bytes.",
+    "decode": "Load payload (the bytes after the size field); netId and values must match. A missing netId is null.",
+    "frames": "Split a WebSocket message into packets per PROTOCOL.md section 2."
+  },
+  "encode": [
+    {
+      "name": "empty packet",
+      "netId": 1,
+      "values": [],
+      "hex": "02000100"
+    },
+    {
+      "name": "u8 bounds",
+      "netId": 2,
+      "values": [
+        {
+          "t": "int",
+          "v": 0
+        },
+        {
+          "t": "int",
+          "v": 255
+        }
+      ],
+      "hex": "06000200000000ff"
+    },
+    {
+      "name": "u16 bounds",
+      "netId": 2,
+      "values": [
+        {
+          "t": "int",
+          "v": 256
+        },
+        {
+          "t": "int",
+          "v": 65535
+        }
+      ],
+      "hex": "0800020001000101ffff"
+    },
+    {
+      "name": "u32 bounds",
+      "netId": 2,
+      "values": [
+        {
+          "t": "int",
+          "v": 65536
+        },
+        {
+          "t": "int",
+          "v": 4294967295
+        }
+      ],
+      "hex": "0c000200020000010002ffffffff"
+    },
+    {
+      "name": "s8 bounds",
+      "netId": 2,
+      "values": [
+        {
+          "t": "int",
+          "v": -1
+        },
+        {
+          "t": "int",
+          "v": -128
+        }
+      ],
+      "hex": "0600020003ff0380"
+    },
+    {
+      "name": "s16 bounds",
+      "netId": 2,
+      "values": [
+        {
+          "t": "int",
+          "v": -129
+        },
+        {
+          "t": "int",
+          "v": -32768
+        }
+      ],
+      "hex": "08000200047fff040080"
+    },
+    {
+      "name": "s32 bounds",
+      "netId": 2,
+      "values": [
+        {
+          "t": "int",
+          "v": -32769
+        },
+        {
+          "t": "int",
+          "v": -2147483648
+        }
+      ],
+      "hex": "0c00020005ff7fffff0500000080"
+    },
+    {
+      "name": "f32 values",
+      "netId": 3,
+      "values": [
+        {
+          "t": "float",
+          "v": 1.5
+        },
+        {
+          "t": "float",
+          "v": -0.25
+        },
+        {
+          "t": "float",
+          "v": 0.1
+        }
+      ],
+      "hex": "11000300070000c03f07000080be07cdcccc3d"
+    },
+    {
+      "name": "f32 rounds to nearest (16777215.5 -> 16777216)",
+      "netId": 3,
+      "values": [
+        {
+          "t": "float",
+          "v": 16777215.5
+        }
+      ],
+      "hex": "07000300070000804b"
+    },
+    {
+      "name": "f32 at threshold magnitude",
+      "netId": 3,
+      "values": [
+        {
+          "t": "float",
+          "v": -16777215.75
+        }
+      ],
+      "hex": "0700030007000080cb"
+    },
+    {
+      "name": "f64 above threshold",
+      "netId": 3,
+      "values": [
+        {
+          "t": "float",
+          "v": 16777216.5
+        },
+        {
+          "t": "float",
+          "v": -10000000000.5
+        }
+      ],
+      "hex": "1400030008000000080000704108000004205fa002c2"
+    },
+    {
+      "name": "non-finite floats are f64",
+      "netId": 3,
+      "values": [
+        {
+          "t": "float",
+          "v": "NaN"
+        },
+        {
+          "t": "float",
+          "v": "Infinity"
+        },
+        {
+          "t": "float",
+          "v": "-Infinity"
+        }
+      ],
+      "hex": "1d00030008000000000000f87f08000000000000f07f08000000000000f0ff"
+    },
+    {
+      "name": "booleans are u8",
+      "netId": 4,
+      "values": [
+        {
+          "t": "bool",
+          "v": true
+        },
+        {
+          "t": "bool",
+          "v": false
+        }
+      ],
+      "hex": "0600040000010000"
+    },
+    {
+      "name": "strings",
+      "netId": 5,
+      "values": [
+        {
+          "t": "string",
+          "v": ""
+        },
+        {
+          "t": "string",
+          "v": "hi"
+        },
+        {
+          "t": "string",
+          "v": "é"
+        },
+        {
+          "t": "string",
+          "v": "日本"
+        }
+      ],
+      "hex": "1c00050009010000090300686900090300c3a900090700e697a5e69cac00"
+    },
+    {
+      "name": "buffers",
+      "netId": 6,
+      "values": [
+        {
+          "t": "buffer",
+          "hex": ""
+        },
+        {
+          "t": "buffer",
+          "hex": "0102ff"
+        }
+      ],
+      "hex": "090006000a000a030102ff"
+    },
+    {
+      "name": "undefined",
+      "netId": 7,
+      "values": [
+        {
+          "t": "undefined"
+        }
+      ],
+      "hex": "030007000b"
+    },
+    {
+      "name": "undefined in the middle",
+      "netId": 7,
+      "values": [
+        {
+          "t": "int",
+          "v": 1
+        },
+        {
+          "t": "undefined"
+        },
+        {
+          "t": "int",
+          "v": 2
+        }
+      ],
+      "hex": "0700070000010b0002"
+    },
+    {
+      "name": "max netId",
+      "netId": 65535,
+      "values": [
+        {
+          "t": "int",
+          "v": 1
+        }
+      ],
+      "hex": "0400ffff0001"
+    },
+    {
+      "name": "worked example from PROTOCOL.md",
+      "netId": 7,
+      "values": [
+        {
+          "t": "int",
+          "v": 42
+        },
+        {
+          "t": "int",
+          "v": 300
+        },
+        {
+          "t": "int",
+          "v": -5
+        },
+        {
+          "t": "float",
+          "v": 1.5
+        },
+        {
+          "t": "string",
+          "v": "hi"
+        },
+        {
+          "t": "buffer",
+          "hex": "0102"
+        },
+        {
+          "t": "undefined"
+        },
+        {
+          "t": "bool",
+          "v": true
+        }
+      ],
+      "hex": "1b000700002a012c0103fb070000c03f0903006869000a0201020b0001"
+    }
+  ],
+  "encode_errors": [
+    {
+      "name": "integer above u32",
+      "netId": 1,
+      "values": [
+        {
+          "t": "int",
+          "v": 4294967296
+        }
+      ]
+    },
+    {
+      "name": "integer below s32",
+      "netId": 1,
+      "values": [
+        {
+          "t": "int",
+          "v": -2147483649
+        }
+      ]
+    },
+    {
+      "name": "netId above u16",
+      "netId": 65536,
+      "values": []
+    },
+    {
+      "name": "buffer over 255 bytes",
+      "netId": 1,
+      "values": [
+        {
+          "t": "buffer",
+          "hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ]
+    },
+    {
+      "name": "string over 65534 bytes",
+      "netId": 1,
+      "values": [
+        {
+          "t": "string",
+          "repeat": "a",
+          "count": 65535
+        }
+      ]
+    },
+    {
+      "name": "payload over 65535 bytes",
+      "netId": 1,
+      "values": [
+        {
+          "t": "string",
+          "repeat": "a",
+          "count": 40000
+        },
+        {
+          "t": "string",
+          "repeat": "a",
+          "count": 40000
+        }
+      ]
+    }
+  ],
+  "decode": [
+    {
+      "name": "netId only",
+      "payload": "0100",
+      "netId": 1,
+      "values": []
+    },
+    {
+      "name": "payload shorter than netId",
+      "payload": "01",
+      "netId": null,
+      "values": []
+    },
+    {
+      "name": "empty payload",
+      "payload": "",
+      "netId": null,
+      "values": []
+    },
+    {
+      "name": "f16 values",
+      "payload": "010006003c0600c006553506ff7b06010006007c0600fc06007e",
+      "netId": 1,
+      "values": [
+        {
+          "type": "f16",
+          "v": 1
+        },
+        {
+          "type": "f16",
+          "v": -2
+        },
+        {
+          "type": "f16",
+          "v": 0.333251953125
+        },
+        {
+          "type": "f16",
+          "v": 65504
+        },
+        {
+          "type": "f16",
+          "v": 5.960464477539063e-8
+        },
+        {
+          "type": "f16",
+          "v": "Infinity"
+        },
+        {
+          "type": "f16",
+          "v": "-Infinity"
+        },
+        {
+          "type": "f16",
+          "v": "NaN"
+        }
+      ]
+    },
+    {
+      "name": "f16 followed by more data",
+      "payload": "010006003c0007",
+      "netId": 1,
+      "values": [
+        {
+          "type": "f16",
+          "v": 1
+        },
+        {
+          "type": "u8",
+          "v": 7
+        }
+      ]
+    },
+    {
+      "name": "string without NUL terminator",
+      "payload": "010009020068690007",
+      "netId": 1,
+      "values": [
+        {
+          "type": "string",
+          "v": "hi"
+        },
+        {
+          "type": "u8",
+          "v": 7
+        }
+      ]
+    },
+    {
+      "name": "string with only NUL",
+      "payload": "010009010000",
+      "netId": 1,
+      "values": [
+        {
+          "type": "string",
+          "v": ""
+        }
+      ]
+    },
+    {
+      "name": "string with zero length",
+      "payload": "01000900000007",
+      "netId": 1,
+      "values": [
+        {
+          "type": "string",
+          "v": ""
+        },
+        {
+          "type": "u8",
+          "v": 7
+        }
+      ]
+    },
+    {
+      "name": "undefined does not end the packet",
+      "payload": "010000010b0002",
+      "netId": 1,
+      "values": [
+        {
+          "type": "u8",
+          "v": 1
+        },
+        {
+          "type": "undefined"
+        },
+        {
+          "type": "u8",
+          "v": 2
+        }
+      ]
+    },
+    {
+      "name": "unknown type stops parsing",
+      "payload": "010000010c0002",
+      "netId": 1,
+      "values": [
+        {
+          "type": "u8",
+          "v": 1
+        }
+      ]
+    },
+    {
+      "name": "truncated u16 keeps earlier values",
+      "payload": "010000070105",
+      "netId": 1,
+      "values": [
+        {
+          "type": "u8",
+          "v": 7
+        }
+      ]
+    },
+    {
+      "name": "truncated f64",
+      "payload": "010008000000",
+      "netId": 1,
+      "values": []
+    },
+    {
+      "name": "string length past end",
+      "payload": "010009ffff61",
+      "netId": 1,
+      "values": []
+    },
+    {
+      "name": "string with 1-byte length field",
+      "payload": "010000090901",
+      "netId": 1,
+      "values": [
+        {
+          "type": "u8",
+          "v": 9
+        }
+      ]
+    },
+    {
+      "name": "buffer length past end",
+      "payload": "01000a040102",
+      "netId": 1,
+      "values": []
+    },
+    {
+      "name": "buffer missing length",
+      "payload": "01000a",
+      "netId": 1,
+      "values": []
+    }
+  ],
+  "frames": [
+    {
+      "name": "single packet",
+      "hex": "04000100002a",
+      "packets": [
+        {
+          "netId": 1,
+          "values": [
+            {
+              "type": "u8",
+              "v": 42
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "two packets in one message",
+      "hex": "0200010002000200",
+      "packets": [
+        {
+          "netId": 1,
+          "values": []
+        },
+        {
+          "netId": 2,
+          "values": []
+        }
+      ]
+    },
+    {
+      "name": "zero size stops parsing",
+      "hex": "02000100000002000200",
+      "packets": [
+        {
+          "netId": 1,
+          "values": []
+        }
+      ]
+    },
+    {
+      "name": "size past end drops the rest",
+      "hex": "0200010005000200",
+      "packets": [
+        {
+          "netId": 1,
+          "values": []
+        }
+      ]
+    },
+    {
+      "name": "trailing single byte ignored",
+      "hex": "02000100ff",
+      "packets": [
+        {
+          "netId": 1,
+          "values": []
+        }
+      ]
+    },
+    {
+      "name": "empty message",
+      "hex": "",
+      "packets": []
+    }
+  ]
+}
